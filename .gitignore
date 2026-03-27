@@ -207,9 +207,9 @@ marimo/_lsp/
 __marimo__/
 
 # Project-local artifacts
-data/
-models/
-outputs/
+/data/
+/models/
+/outputs/
 *.pt
 *.pth
 *.ckpt
