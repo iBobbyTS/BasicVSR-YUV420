@@ -5,6 +5,7 @@ import sys
 from argparse import ArgumentParser
 from dataclasses import asdict
 from pathlib import Path
+from typing import Any, Dict, Optional
 
 import torch
 from torch.cuda.amp import GradScaler
@@ -22,6 +23,13 @@ from basicvsr_yuv420.data import DEFAULT_VALIDATION_CLIPS, REDSVSRDataset
 from basicvsr_yuv420.engine import evaluate, train_one_epoch
 from basicvsr_yuv420.models import build_generator
 from basicvsr_yuv420.utils import ensure_dir, read_json, resolve_device, set_seed, write_json
+
+DATASET_PATH_ARGUMENTS = {
+    "train_lr_dir",
+    "train_hr_dir",
+    "val_lr_dir",
+    "val_hr_dir",
+}
 
 
 def parse_args() -> ArgumentParser:
@@ -48,6 +56,18 @@ def parse_args() -> ArgumentParser:
     parser.add_argument("--save-every", type=int, default=5)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument(
+        "--auto-resume",
+        dest="auto_resume",
+        action="store_true",
+        help="Automatically resume from output-dir/latest.pt when available. Enabled by default.",
+    )
+    parser.add_argument(
+        "--no-auto-resume",
+        dest="auto_resume",
+        action="store_false",
+        help="Disable automatic checkpoint resume detection.",
+    )
+    parser.add_argument(
         "--amp",
         dest="amp",
         action="store_true",
@@ -71,7 +91,7 @@ def parse_args() -> ArgumentParser:
         action="store_false",
         help="Do not apply the default REDS validation clip split.",
     )
-    parser.set_defaults(amp=True, use_default_reds_split=True)
+    parser.set_defaults(amp=True, use_default_reds_split=True, auto_resume=True)
     return parser
 
 
@@ -103,6 +123,56 @@ def build_dataset(
     )
 
 
+def resolve_resume_path(args, output_dir: Path) -> Optional[Path]:
+    if args.resume:
+        return Path(args.resume)
+    latest_path = output_dir / "latest.pt"
+    if args.auto_resume and latest_path.exists():
+        return latest_path
+    return None
+
+
+def trim_history(history: Dict[str, Any], completed_epochs: int) -> Dict[str, Any]:
+    trimmed = {
+        "train": [],
+        "val": [],
+    }
+    for key in ("train", "val"):
+        records = history.get(key, [])
+        trimmed[key] = [record for record in records if int(record.get("epoch", 0)) <= completed_epochs]
+    return trimmed
+
+
+def write_state(
+    path: Path,
+    *,
+    status: str,
+    requested_epochs: int,
+    last_completed_epoch: int,
+    next_epoch: Optional[int],
+    latest_checkpoint: Optional[Path],
+    best_psnr: Optional[float],
+    resumed_from: Optional[Path],
+) -> None:
+    payload = {
+        "status": status,
+        "requested_epochs": requested_epochs,
+        "last_completed_epoch": last_completed_epoch,
+        "next_epoch": next_epoch,
+        "latest_checkpoint": None if latest_checkpoint is None else str(latest_checkpoint),
+        "best_psnr": best_psnr,
+        "resumed_from": None if resumed_from is None else str(resumed_from),
+    }
+    write_json(payload, path)
+
+
+def build_recorded_config(args) -> Dict[str, Any]:
+    return {
+        key: value
+        for key, value in sorted(vars(args).items())
+        if key not in DATASET_PATH_ARGUMENTS
+    }
+
 def main() -> None:
     parser = parse_args()
     args = parser.parse_args()
@@ -112,7 +182,22 @@ def main() -> None:
     output_dir = ensure_dir(args.output_dir)
     history_path = output_dir / "history.json"
     config_path = output_dir / "config.json"
-    write_json(vars(args), config_path)
+    state_path = output_dir / "state.json"
+    current_config = build_recorded_config(args)
+    resume_path = resolve_resume_path(args, output_dir)
+
+    if config_path.exists():
+        recorded_config = read_json(config_path, default={})
+        if recorded_config != current_config:
+            payload = {
+                "status": "config_mismatch",
+                "recorded_config": recorded_config,
+                "current_config": current_config,
+            }
+            print(json.dumps(payload, indent=2), flush=True)
+            raise SystemExit(1)
+
+    write_json(current_config, config_path)
 
     train_dataset = build_dataset(lr_dir=args.train_lr_dir, hr_dir=args.train_hr_dir, train=True, args=args)
     train_loader = DataLoader(
@@ -166,21 +251,71 @@ def main() -> None:
 
     start_epoch = 0
     best_psnr = None
-    history = read_json(history_path, default={"train": [], "val": []})
+    history = {"train": [], "val": []}
+    resumed_state = None
 
-    if args.resume:
-        state = load_checkpoint(
-            args.resume,
+    if resume_path is not None:
+        resumed_state = load_checkpoint(
+            resume_path,
             model,
             optimizer=optimizer,
             scheduler=scheduler,
             scaler=scaler,
             map_location="cpu",
         )
-        start_epoch = int(state.get("epoch", -1)) + 1
-        best_psnr = state.get("best_psnr")
+        start_epoch = int(resumed_state.get("epoch", -1)) + 1
+        best_psnr = resumed_state.get("best_psnr")
+        history = trim_history(
+            read_json(history_path, default={"train": [], "val": []}),
+            completed_epochs=start_epoch,
+        )
+
+    latest_path = output_dir / "latest.pt"
+
+    if start_epoch >= args.epochs:
+        write_state(
+            state_path,
+            status="completed",
+            requested_epochs=args.epochs,
+            last_completed_epoch=start_epoch,
+            next_epoch=None,
+            latest_checkpoint=resume_path if resume_path is not None else latest_path,
+            best_psnr=best_psnr,
+            resumed_from=resume_path,
+        )
+        summary = {
+            "status": "completed",
+            "requested_epochs": args.epochs,
+            "completed_epochs": start_epoch,
+            "best_psnr": best_psnr,
+            "latest_checkpoint": None if resume_path is None else str(resume_path),
+            "last_metrics": None if resumed_state is None else resumed_state.get("metrics"),
+        }
+        print(json.dumps(summary, indent=2), flush=True)
+        return
+
+    write_state(
+        state_path,
+        status="running",
+        requested_epochs=args.epochs,
+        last_completed_epoch=start_epoch,
+        next_epoch=start_epoch + 1,
+        latest_checkpoint=resume_path if resume_path is not None else None,
+        best_psnr=best_psnr,
+        resumed_from=resume_path,
+    )
 
     for epoch in range(start_epoch, args.epochs):
+        write_state(
+            state_path,
+            status="running",
+            requested_epochs=args.epochs,
+            last_completed_epoch=epoch,
+            next_epoch=epoch + 1,
+            latest_checkpoint=latest_path if latest_path.exists() else resume_path,
+            best_psnr=best_psnr,
+            resumed_from=resume_path,
+        )
         train_stats = train_one_epoch(
             model,
             train_loader,
@@ -202,13 +337,9 @@ def main() -> None:
             )
 
         train_record = {"epoch": epoch + 1, **asdict(train_stats)}
-        history.setdefault("train", []).append(train_record)
-        if val_stats is not None:
-            history.setdefault("val", []).append({"epoch": epoch + 1, **asdict(val_stats)})
-        write_json(history, history_path)
-
         monitor_psnr = val_stats.psnr if val_stats is not None else train_stats.psnr
-        if best_psnr is None or monitor_psnr > best_psnr:
+        is_best = best_psnr is None or monitor_psnr > best_psnr
+        if is_best:
             best_psnr = monitor_psnr
 
         metrics = {"train": train_record}
@@ -230,14 +361,30 @@ def main() -> None:
             },
         )
 
-        latest_path = output_dir / "latest.pt"
         save_checkpoint(latest_path, checkpoint)
 
-        if monitor_psnr == best_psnr:
+        if is_best:
             save_checkpoint(output_dir / "best.pt", checkpoint)
 
         if (epoch + 1) % args.save_every == 0:
             save_checkpoint(output_dir / f"epoch_{epoch + 1:04d}.pt", checkpoint)
+
+        history.setdefault("train", []).append(train_record)
+        if val_stats is not None:
+            history.setdefault("val", []).append({"epoch": epoch + 1, **asdict(val_stats)})
+        write_json(history, history_path)
+
+        is_completed = epoch + 1 >= args.epochs
+        write_state(
+            state_path,
+            status="completed" if is_completed else "running",
+            requested_epochs=args.epochs,
+            last_completed_epoch=epoch + 1,
+            next_epoch=None if is_completed else epoch + 2,
+            latest_checkpoint=latest_path,
+            best_psnr=best_psnr,
+            resumed_from=resume_path,
+        )
 
         summary = {
             "epoch": epoch + 1,
@@ -246,7 +393,7 @@ def main() -> None:
             "best_psnr": best_psnr,
             "latest_checkpoint": str(latest_path),
         }
-        print(json.dumps(summary, indent=2))
+        print(json.dumps(summary, indent=2), flush=True)
 
 
 if __name__ == "__main__":

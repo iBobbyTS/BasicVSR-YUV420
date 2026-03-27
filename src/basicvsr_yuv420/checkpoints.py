@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 from pathlib import Path
 from typing import Any, Dict, Optional, Union
 
@@ -8,6 +9,8 @@ from torch import nn
 from torch.cuda.amp import GradScaler
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import _LRScheduler
+
+from .utils import atomic_write_bytes
 
 
 def _torch_load(path: Union[str, Path], map_location: Union[str, torch.device] = "cpu") -> Dict[str, Any]:
@@ -52,7 +55,9 @@ def build_checkpoint(
 def save_checkpoint(path: Union[str, Path], checkpoint: Dict[str, Any]) -> None:
     output_path = Path(path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    torch.save(checkpoint, output_path)
+    buffer = io.BytesIO()
+    torch.save(checkpoint, buffer)
+    atomic_write_bytes(buffer.getvalue(), output_path)
 
 
 def load_model_weights(

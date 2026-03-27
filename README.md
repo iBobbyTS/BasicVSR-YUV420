@@ -112,9 +112,12 @@ Important defaults:
 - Python-compatible notebook defaults are already applied in `train.py`
 - mixed precision is enabled by default
 - the default REDS validation clip split is enabled by default
+- automatic resume from `--output-dir/latest.pt` is enabled by default
+- all non-dataset `train.py` arguments are recorded in `config.json`; if they differ from the previous run, the script prints both configs and exits
+- if the requested training run has already completed, the script reports the saved status and exits without starting a new epoch
 - the scheduler behavior intentionally differs from the original notebook and runs across the whole training job
 
-Training outputs are written to the directory passed through `--output-dir`. After one epoch, `latest.pt` will be saved there. `best.pt` is also saved when validation improves.
+Training outputs are written to the directory passed through `--output-dir`. After one epoch, `latest.pt` will be saved there. `best.pt` is also saved when validation improves. The script also writes `history.json`, `config.json`, and `state.json` so the same command can resume from the last completed epoch after an interruption.
 
 ## Evaluate
 
