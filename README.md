@@ -110,7 +110,14 @@ python scripts/train.py --train-lr-dir data/REDS_downloads/train_sharp_bicubic/t
 Important defaults:
 
 - Python-compatible notebook defaults are already applied in `train.py`
-- mixed precision is enabled by default
+- `train_batch_size` defaults to `4`
+- `val_batch_size` defaults to `1`
+- `grad_accum_steps` defaults to `1`
+- `clip_grad_norm` is disabled by default
+- training mixed precision is enabled by default
+- validation mixed precision is enabled by default
+- SSIM computation is skipped by default; add `--compute-ssim` if you want to include it
+- validation runs every epoch by default; change this with `--val-interval`
 - the default REDS validation clip split is enabled by default
 - automatic resume from `--output-dir/latest.pt` is enabled by default
 - all non-dataset `train.py` arguments are recorded in `config.json`; if they differ from the previous run, the script prints both configs and exits
@@ -118,6 +125,39 @@ Important defaults:
 - the scheduler behavior intentionally differs from the original notebook and runs across the whole training job
 
 Training outputs are written to the directory passed through `--output-dir`. After one epoch, `latest.pt` will be saved there. `best.pt` is also saved when validation improves. The script also writes `history.json`, `config.json`, and `state.json` so the same command can resume from the last completed epoch after an interruption.
+
+## Completed RGB Baseline Run
+
+The following RGB baseline run completed successfully and can be used as a reference configuration for the course project:
+
+```bash
+python scripts/train.py --train-lr-dir data/REDS_downloads/train_sharp_bicubic/train/train_sharp_bicubic/X4 --train-hr-dir data/REDS_downloads/train_sharp/train/train_sharp --val-lr-dir data/REDS_downloads/val_sharp_bicubic/val/val_sharp_bicubic/X4 --val-hr-dir data/REDS_downloads/val_sharp/val/val_sharp --spynet-weights models/checkpoints/spynet_sintel_final-3d2a1287.pth --output-dir outputs/baseline_rgb_v3_noamp_lr1e4_bs2_acc2 --device cuda:0 --epochs 70 --train-batch-size 2 --val-batch-size 1 --learning-rate 1e-4 --min-learning-rate 1e-7 --num-workers 4 --grad-accum-steps 2 --clip-grad-norm 1.0 --sequence-length 15 --sequence-stride 15 --patch-size 64 --num-channels 64 --residual-blocks 7 --scale 4 --save-every 5 --val-interval 10 --seed 42 --no-amp --no-eval-amp --skip-ssim --use-default-reds-split
+```
+
+Recorded configuration summary:
+
+- output directory: `outputs/baseline_rgb_v3_noamp_lr1e4_bs2_acc2`
+- epochs: `70`
+- train batch size: `2`
+- validation batch size: `1`
+- gradient accumulation steps: `2`
+- learning rate: `1e-4`
+- minimum learning rate: `1e-7`
+- patch size: `64`
+- sequence length: `15`
+- sequence stride: `15`
+- channels: `64`
+- residual blocks: `7`
+- gradient clipping: `1.0`
+- training AMP: `disabled`
+- evaluation AMP: `disabled`
+- SSIM computation: `skipped`
+- validation interval: `10`
+
+Final recorded validation metrics from this run:
+
+- best validation PSNR: `28.0913 dB`
+- final validation loss: `0.02454358`
 
 ## Evaluate
 

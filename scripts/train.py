@@ -43,10 +43,13 @@ def parse_args() -> ArgumentParser:
     parser.add_argument("--resume")
     parser.add_argument("--device")
     parser.add_argument("--epochs", type=int, default=70)
-    parser.add_argument("--batch-size", type=int, default=4)
+    parser.add_argument("--train-batch-size", type=int, default=4)
+    parser.add_argument("--val-batch-size", type=int, default=1)
     parser.add_argument("--learning-rate", type=float, default=2e-4)
     parser.add_argument("--min-learning-rate", type=float, default=1e-7)
     parser.add_argument("--num-workers", type=int, default=4)
+    parser.add_argument("--grad-accum-steps", type=int, default=1)
+    parser.add_argument("--clip-grad-norm", type=float)
     parser.add_argument("--sequence-length", type=int, default=15)
     parser.add_argument("--sequence-stride", type=int, default=15)
     parser.add_argument("--patch-size", type=int, default=64)
@@ -54,6 +57,7 @@ def parse_args() -> ArgumentParser:
     parser.add_argument("--residual-blocks", type=int, default=7)
     parser.add_argument("--scale", type=int, default=4)
     parser.add_argument("--save-every", type=int, default=5)
+    parser.add_argument("--val-interval", type=int, default=1)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument(
         "--auto-resume",
@@ -80,6 +84,30 @@ def parse_args() -> ArgumentParser:
         help="Disable mixed precision training.",
     )
     parser.add_argument(
+        "--eval-amp",
+        dest="eval_amp",
+        action="store_true",
+        help="Enable mixed precision during validation. Enabled by default.",
+    )
+    parser.add_argument(
+        "--no-eval-amp",
+        dest="eval_amp",
+        action="store_false",
+        help="Disable mixed precision during validation.",
+    )
+    parser.add_argument(
+        "--skip-ssim",
+        dest="skip_ssim",
+        action="store_true",
+        help="Skip SSIM computation during training and validation. Enabled by default.",
+    )
+    parser.add_argument(
+        "--compute-ssim",
+        dest="skip_ssim",
+        action="store_false",
+        help="Compute SSIM during training and validation.",
+    )
+    parser.add_argument(
         "--use-default-reds-split",
         dest="use_default_reds_split",
         action="store_true",
@@ -91,7 +119,13 @@ def parse_args() -> ArgumentParser:
         action="store_false",
         help="Do not apply the default REDS validation clip split.",
     )
-    parser.set_defaults(amp=True, use_default_reds_split=True, auto_resume=True)
+    parser.set_defaults(
+        amp=True,
+        eval_amp=True,
+        skip_ssim=True,
+        use_default_reds_split=True,
+        auto_resume=True,
+    )
     return parser
 
 
@@ -177,6 +211,13 @@ def main() -> None:
     parser = parse_args()
     args = parser.parse_args()
 
+    if args.val_interval < 1:
+        raise ValueError("--val-interval must be at least 1.")
+    if args.grad_accum_steps < 1:
+        raise ValueError("--grad-accum-steps must be at least 1.")
+    if args.clip_grad_norm is not None and args.clip_grad_norm <= 0:
+        raise ValueError("--clip-grad-norm must be positive when provided.")
+
     set_seed(args.seed)
     device = resolve_device(args.device)
     output_dir = ensure_dir(args.output_dir)
@@ -202,7 +243,7 @@ def main() -> None:
     train_dataset = build_dataset(lr_dir=args.train_lr_dir, hr_dir=args.train_hr_dir, train=True, args=args)
     train_loader = DataLoader(
         train_dataset,
-        batch_size=args.batch_size,
+        batch_size=args.train_batch_size,
         shuffle=True,
         num_workers=args.num_workers,
         pin_memory=device.type == "cuda",
@@ -221,7 +262,7 @@ def main() -> None:
         )
         val_loader = DataLoader(
             val_dataset,
-            batch_size=args.batch_size,
+            batch_size=args.val_batch_size,
             shuffle=False,
             num_workers=args.num_workers,
             pin_memory=device.type == "cuda",
@@ -230,7 +271,7 @@ def main() -> None:
         val_dataset = build_dataset(lr_dir=args.train_lr_dir, hr_dir=args.train_hr_dir, train=False, args=args)
         val_loader = DataLoader(
             val_dataset,
-            batch_size=args.batch_size,
+            batch_size=args.val_batch_size,
             shuffle=False,
             num_workers=args.num_workers,
             pin_memory=device.type == "cuda",
@@ -242,9 +283,13 @@ def main() -> None:
         residual_blocks=args.residual_blocks,
     ).to(device)
     optimizer = Adam(model.parameters(), lr=args.learning_rate)
+    scheduler_steps_per_epoch = max(
+        (len(train_loader) + args.grad_accum_steps - 1) // args.grad_accum_steps,
+        1,
+    )
     scheduler = CosineAnnealingLR(
         optimizer,
-        T_max=max(args.epochs * max(len(train_loader), 1), 1),
+        T_max=max(args.epochs * scheduler_steps_per_epoch, 1),
         eta_min=args.min_learning_rate,
     )
     scaler = GradScaler(enabled=args.amp and device.type == "cuda")
@@ -324,21 +369,35 @@ def main() -> None:
             scheduler=scheduler,
             scaler=scaler,
             amp_enabled=args.amp and device.type == "cuda",
+            compute_ssim=not args.skip_ssim,
+            grad_accum_steps=args.grad_accum_steps,
+            clip_grad_norm=args.clip_grad_norm,
             progress_desc=f"Train {epoch + 1}/{args.epochs}",
         )
 
         val_stats = None
-        if val_loader is not None:
+        should_validate = (
+            val_loader is not None
+            and ((epoch + 1) % args.val_interval == 0 or (epoch + 1) == args.epochs)
+        )
+        if should_validate:
             val_stats = evaluate(
                 model,
                 val_loader,
                 device,
+                amp_enabled=args.eval_amp and device.type == "cuda",
+                compute_ssim=not args.skip_ssim,
                 progress_desc=f"Eval {epoch + 1}/{args.epochs}",
             )
 
         train_record = {"epoch": epoch + 1, **asdict(train_stats)}
-        monitor_psnr = val_stats.psnr if val_stats is not None else train_stats.psnr
-        is_best = best_psnr is None or monitor_psnr > best_psnr
+        monitor_psnr = train_stats.psnr
+        is_best = False
+        if val_loader is None:
+            is_best = best_psnr is None or monitor_psnr > best_psnr
+        elif val_stats is not None:
+            monitor_psnr = val_stats.psnr
+            is_best = best_psnr is None or monitor_psnr > best_psnr
         if is_best:
             best_psnr = monitor_psnr
 
@@ -390,6 +449,7 @@ def main() -> None:
             "epoch": epoch + 1,
             "train": train_record,
             "val": None if val_stats is None else {"epoch": epoch + 1, **asdict(val_stats)},
+            "validation_ran": should_validate,
             "best_psnr": best_psnr,
             "latest_checkpoint": str(latest_path),
         }
