@@ -212,7 +212,9 @@ __marimo__/
 /data/
 /models/
 /outputs/
-/results/
+/results/*
+!/results/performance.md
+!/results/psnr.md
 *.pt
 !best.pt
 *.pid
