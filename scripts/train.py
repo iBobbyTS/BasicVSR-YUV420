@@ -57,6 +57,12 @@ def parse_args() -> ArgumentParser:
     parser.add_argument("--num-channels", type=int, default=64)
     parser.add_argument("--residual-blocks", type=int, default=7)
     parser.add_argument("--scale", type=int, default=4)
+    parser.add_argument(
+        "--objective-domain",
+        choices=("model_default", "rgb", "yuv420"),
+        default="model_default",
+        help="Primary loss and validation metric domain.",
+    )
     parser.add_argument("--save-every", type=int, default=5)
     parser.add_argument("--val-interval", type=int, default=1)
     parser.add_argument("--seed", type=int, default=42)
@@ -119,6 +125,11 @@ def parse_args() -> ArgumentParser:
         dest="use_default_reds_split",
         action="store_false",
         help="Do not apply the default REDS validation clip split.",
+    )
+    parser.add_argument(
+        "--rgb-eval-yuv420",
+        action="store_true",
+        help="For the RGB baseline, validate with LR input passed through RGB->YUV420->RGB before inference.",
     )
     parser.set_defaults(
         amp=True,
@@ -230,6 +241,11 @@ def main() -> None:
     current_config = build_recorded_config(args)
     resume_path = resolve_resume_path(args, output_dir)
     model_spec = get_model_spec(args.model)
+    objective_domain = model_spec.metric_domain if args.objective_domain == "model_default" else args.objective_domain
+    if model_spec.output_format == "rgb" and objective_domain != "rgb":
+        raise ValueError("RGB-output models only support rgb objective domain.")
+    if model_spec.output_format == "yuv420" and objective_domain not in {"rgb", "yuv420"}:
+        raise ValueError("YUV420-output models only support rgb or yuv420 objective domains.")
 
     if config_path.exists():
         recorded_config = read_json(config_path, default={})
@@ -300,6 +316,13 @@ def main() -> None:
         num_channels=args.num_channels,
         residual_blocks=args.residual_blocks,
     ).to(device)
+    eval_forward_fn = None
+    if args.rgb_eval_yuv420:
+        if model_spec.input_format != "rgb":
+            raise ValueError("--rgb-eval-yuv420 is only supported for RGB-input models.")
+        if not hasattr(model, "eval_yuv420"):
+            raise ValueError(f"Model '{args.model}' does not implement eval_yuv420().")
+        eval_forward_fn = model.eval_yuv420
     optimizer = Adam(model.parameters(), lr=args.learning_rate)
     scheduler_steps_per_epoch = max(
         (len(train_loader) + args.grad_accum_steps - 1) // args.grad_accum_steps,
@@ -388,6 +411,7 @@ def main() -> None:
             scaler=scaler,
             amp_enabled=args.amp and device.type == "cuda",
             compute_ssim=not args.skip_ssim,
+            metric_domain=objective_domain,
             grad_accum_steps=args.grad_accum_steps,
             clip_grad_norm=args.clip_grad_norm,
             progress_desc=f"Train {epoch + 1}/{args.epochs}",
@@ -406,6 +430,8 @@ def main() -> None:
                 amp_enabled=args.eval_amp and device.type == "cuda",
                 compute_ssim=not args.skip_ssim,
                 progress_desc=f"Eval {epoch + 1}/{args.epochs}",
+                forward_fn=eval_forward_fn,
+                metric_domain=objective_domain,
             )
 
         train_record = {"epoch": epoch + 1, **asdict(train_stats)}

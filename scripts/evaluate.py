@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import sys
 from argparse import ArgumentParser
+from dataclasses import asdict
 from pathlib import Path
 
 from torch.utils.data import DataLoader
@@ -35,6 +36,17 @@ def parse_args() -> ArgumentParser:
     parser.add_argument("--residual-blocks", type=int, default=7)
     parser.add_argument("--scale", type=int, default=4)
     parser.add_argument("--use-default-reds-split", action="store_true")
+    parser.add_argument(
+        "--metric-domain",
+        choices=("model_default", "rgb", "yuv420"),
+        default="model_default",
+        help="Primary metric domain for evaluation.",
+    )
+    parser.add_argument(
+        "--rgb-eval-yuv420",
+        action="store_true",
+        help="For the RGB baseline, pass LR input through RGB->YUV420->RGB before inference.",
+    )
     return parser
 
 
@@ -44,6 +56,11 @@ def main() -> None:
 
     device = resolve_device(args.device)
     model_spec = get_model_spec(args.model)
+    metric_domain = model_spec.metric_domain if args.metric_domain == "model_default" else args.metric_domain
+    if model_spec.output_format == "rgb" and metric_domain != "rgb":
+        raise ValueError("RGB-output models only support rgb metric domain.")
+    if model_spec.output_format == "yuv420" and metric_domain not in {"rgb", "yuv420"}:
+        raise ValueError("YUV420-output models only support rgb or yuv420 metric domains.")
     include_clips = DEFAULT_VALIDATION_CLIPS if args.use_default_reds_split else None
 
     dataset = REDSVSRDataset(
@@ -73,14 +90,22 @@ def main() -> None:
     ).to(device)
     checkpoint_state = load_model_weights(args.checkpoint, model, map_location="cpu")
 
-    results = evaluate(model, dataloader, device)
+    forward_fn = None
+    if args.rgb_eval_yuv420:
+        if model_spec.input_format != "rgb":
+            raise ValueError("--rgb-eval-yuv420 is only supported for RGB-input models.")
+        if not hasattr(model, "eval_yuv420"):
+            raise ValueError(f"Model '{args.model}' does not implement eval_yuv420().")
+        forward_fn = model.eval_yuv420
+
+    results = evaluate(model, dataloader, device, forward_fn=forward_fn, metric_domain=metric_domain)
     payload = {
         "model": args.model,
         "checkpoint": args.checkpoint,
         "epoch": checkpoint_state.get("epoch"),
-        "loss": results.loss,
-        "psnr": results.psnr,
-        "ssim": results.ssim,
+        "rgb_eval_yuv420": args.rgb_eval_yuv420,
+        "metric_domain": metric_domain,
+        **asdict(results),
     }
     print(json.dumps(payload, indent=2))
 
