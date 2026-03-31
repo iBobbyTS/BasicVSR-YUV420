@@ -21,7 +21,7 @@ if str(SRC_ROOT) not in sys.path:
 from basicvsr_yuv420.checkpoints import build_checkpoint, load_checkpoint, save_checkpoint
 from basicvsr_yuv420.data import DEFAULT_VALIDATION_CLIPS, REDSVSRDataset
 from basicvsr_yuv420.engine import evaluate, train_one_epoch
-from basicvsr_yuv420.models import build_generator
+from basicvsr_yuv420.models import build_model, get_model_spec, list_model_ids
 from basicvsr_yuv420.utils import ensure_dir, read_json, resolve_device, set_seed, write_json
 
 DATASET_PATH_ARGUMENTS = {
@@ -39,6 +39,7 @@ def parse_args() -> ArgumentParser:
     parser.add_argument("--val-lr-dir")
     parser.add_argument("--val-hr-dir")
     parser.add_argument("--output-dir", default="outputs/train_run")
+    parser.add_argument("--model", default="basicvsr_rgb_baseline", choices=list_model_ids())
     parser.add_argument("--spynet-weights")
     parser.add_argument("--resume")
     parser.add_argument("--device")
@@ -135,6 +136,7 @@ def build_dataset(
     hr_dir: str,
     train: bool,
     args,
+    color_mode: str,
 ) -> REDSVSRDataset:
     include_clips = None
     exclude_clips = None
@@ -154,6 +156,7 @@ def build_dataset(
         train=train,
         include_clips=include_clips,
         exclude_clips=exclude_clips,
+        color_mode=color_mode,
     )
 
 
@@ -226,6 +229,7 @@ def main() -> None:
     state_path = output_dir / "state.json"
     current_config = build_recorded_config(args)
     resume_path = resolve_resume_path(args, output_dir)
+    model_spec = get_model_spec(args.model)
 
     if config_path.exists():
         recorded_config = read_json(config_path, default={})
@@ -240,7 +244,13 @@ def main() -> None:
 
     write_json(current_config, config_path)
 
-    train_dataset = build_dataset(lr_dir=args.train_lr_dir, hr_dir=args.train_hr_dir, train=True, args=args)
+    train_dataset = build_dataset(
+        lr_dir=args.train_lr_dir,
+        hr_dir=args.train_hr_dir,
+        train=True,
+        args=args,
+        color_mode=model_spec.input_format,
+    )
     train_loader = DataLoader(
         train_dataset,
         batch_size=args.train_batch_size,
@@ -259,6 +269,7 @@ def main() -> None:
             patch_size=None,
             scale=args.scale,
             train=False,
+            color_mode=model_spec.input_format,
         )
         val_loader = DataLoader(
             val_dataset,
@@ -268,7 +279,13 @@ def main() -> None:
             pin_memory=device.type == "cuda",
         )
     elif args.use_default_reds_split:
-        val_dataset = build_dataset(lr_dir=args.train_lr_dir, hr_dir=args.train_hr_dir, train=False, args=args)
+        val_dataset = build_dataset(
+            lr_dir=args.train_lr_dir,
+            hr_dir=args.train_hr_dir,
+            train=False,
+            args=args,
+            color_mode=model_spec.input_format,
+        )
         val_loader = DataLoader(
             val_dataset,
             batch_size=args.val_batch_size,
@@ -277,7 +294,8 @@ def main() -> None:
             pin_memory=device.type == "cuda",
         )
 
-    model = build_generator(
+    model = build_model(
+        args.model,
         spynet_weights=args.spynet_weights,
         num_channels=args.num_channels,
         residual_blocks=args.residual_blocks,
@@ -414,6 +432,7 @@ def main() -> None:
             best_psnr=best_psnr,
             metrics=metrics,
             model_config={
+                "model_id": args.model,
                 "num_channels": args.num_channels,
                 "residual_blocks": args.residual_blocks,
                 "scale": args.scale,

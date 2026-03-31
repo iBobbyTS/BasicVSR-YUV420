@@ -15,7 +15,7 @@ if str(SRC_ROOT) not in sys.path:
 from basicvsr_yuv420.checkpoints import load_model_weights
 from basicvsr_yuv420.data import DEFAULT_VALIDATION_CLIPS, REDSVSRDataset
 from basicvsr_yuv420.engine import evaluate
-from basicvsr_yuv420.models import build_generator
+from basicvsr_yuv420.models import build_model, get_model_spec, list_model_ids
 from basicvsr_yuv420.utils import resolve_device
 
 
@@ -24,6 +24,7 @@ def parse_args() -> ArgumentParser:
     parser.add_argument("--lr-dir", required=True)
     parser.add_argument("--hr-dir", required=True)
     parser.add_argument("--checkpoint", required=True)
+    parser.add_argument("--model", default="basicvsr_rgb_baseline", choices=list_model_ids())
     parser.add_argument("--spynet-weights")
     parser.add_argument("--device")
     parser.add_argument("--batch-size", type=int, default=1)
@@ -42,6 +43,7 @@ def main() -> None:
     args = parser.parse_args()
 
     device = resolve_device(args.device)
+    model_spec = get_model_spec(args.model)
     include_clips = DEFAULT_VALIDATION_CLIPS if args.use_default_reds_split else None
 
     dataset = REDSVSRDataset(
@@ -53,6 +55,7 @@ def main() -> None:
         scale=args.scale,
         train=False,
         include_clips=include_clips,
+        color_mode=model_spec.input_format,
     )
     dataloader = DataLoader(
         dataset,
@@ -62,7 +65,8 @@ def main() -> None:
         pin_memory=device.type == "cuda",
     )
 
-    model = build_generator(
+    model = build_model(
+        args.model,
         spynet_weights=args.spynet_weights,
         num_channels=args.num_channels,
         residual_blocks=args.residual_blocks,
@@ -71,6 +75,7 @@ def main() -> None:
 
     results = evaluate(model, dataloader, device)
     payload = {
+        "model": args.model,
         "checkpoint": args.checkpoint,
         "epoch": checkpoint_state.get("epoch"),
         "loss": results.loss,

@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import random
 from pathlib import Path
-from typing import List, Optional, Sequence, Tuple, Union
+from typing import Dict, List, Optional, Sequence, Tuple, Union
 
 import numpy as np
 import torch
 from PIL import Image
 from torch.utils.data import Dataset
+
+from .colorspace import rgb_to_yuv420_bt709_full_range
 
 DEFAULT_VALIDATION_CLIPS = ("000", "011", "015", "020")
 IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".bmp")
@@ -30,6 +32,7 @@ class REDSVSRDataset(Dataset):
         train: bool = True,
         include_clips: Optional[Sequence[str]] = None,
         exclude_clips: Optional[Sequence[str]] = None,
+        color_mode: str = "rgb",
     ) -> None:
         self.lr_dir = Path(lr_dir)
         self.hr_dir = Path(hr_dir)
@@ -40,6 +43,12 @@ class REDSVSRDataset(Dataset):
         self.train = train
         self.include_clips = set(include_clips or [])
         self.exclude_clips = set(exclude_clips or [])
+        self.color_mode = color_mode
+
+        if self.color_mode not in {"rgb", "yuv420"}:
+            raise ValueError(f"Unsupported color mode: {self.color_mode}")
+        if self.color_mode == "yuv420" and self.patch_size is not None and self.patch_size % 2 != 0:
+            raise ValueError("YUV420 training requires an even patch size.")
 
         if not self.lr_dir.exists():
             raise FileNotFoundError(f"LR directory not found: {self.lr_dir}")
@@ -66,7 +75,7 @@ class REDSVSRDataset(Dataset):
             raise RuntimeError("No training or evaluation samples could be built from the dataset.")
 
     def _build_samples(self) -> List[Tuple[str, int]]:
-        samples = []  # type: List[Tuple[str, int]]
+        samples: List[Tuple[str, int]] = []
         for clip_name in self.clip_names:
             lr_frames = _list_frame_paths(self.lr_clip_dirs[clip_name])
             hr_frames = _list_frame_paths(self.hr_clip_dirs[clip_name])
@@ -110,8 +119,14 @@ class REDSVSRDataset(Dataset):
                 f"Expected HR frame size {expected_hr_shape}, but found {(hr_height, hr_width)}."
             )
 
-        x = random.randint(0, lr_width - self.patch_size)
-        y = random.randint(0, lr_height - self.patch_size)
+        max_x = lr_width - self.patch_size
+        max_y = lr_height - self.patch_size
+        if self.color_mode == "yuv420":
+            x = random.randrange(0, max_x + 1, 2)
+            y = random.randrange(0, max_y + 1, 2)
+        else:
+            x = random.randint(0, max_x)
+            y = random.randint(0, max_y)
 
         lr_crop = lr[:, y : y + self.patch_size, x : x + self.patch_size, :]
         hr_crop = hr[
@@ -122,16 +137,37 @@ class REDSVSRDataset(Dataset):
         ]
         return lr_crop, hr_crop
 
-    def _augment(self, lr: torch.Tensor, hr: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+    def _augment(self, lr: np.ndarray, hr: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
         if random.random() < 0.5:
-            lr = torch.flip(lr, dims=[2])
-            hr = torch.flip(hr, dims=[2])
+            lr = np.flip(lr, axis=2).copy()
+            hr = np.flip(hr, axis=2).copy()
         if random.random() < 0.5:
-            lr = torch.flip(lr, dims=[1])
-            hr = torch.flip(hr, dims=[1])
+            lr = np.flip(lr, axis=1).copy()
+            hr = np.flip(hr, axis=1).copy()
         return lr, hr
 
-    def __getitem__(self, index: int) -> Tuple[torch.Tensor, torch.Tensor]:
+    @staticmethod
+    def _to_chw_tensor(sequence: np.ndarray) -> torch.Tensor:
+        return torch.from_numpy(sequence).permute(0, 3, 1, 2).float() / 255.0
+
+    def _build_rgb_sample(self, lr_tensor: torch.Tensor, hr_tensor: torch.Tensor) -> Dict[str, torch.Tensor]:
+        return {
+            "lr_rgb": lr_tensor,
+            "hr_rgb": hr_tensor,
+        }
+
+    def _build_yuv420_sample(self, lr_tensor: torch.Tensor, hr_tensor: torch.Tensor) -> Dict[str, torch.Tensor]:
+        lr_y, lr_uv = rgb_to_yuv420_bt709_full_range(lr_tensor)
+        hr_y, hr_uv = rgb_to_yuv420_bt709_full_range(hr_tensor)
+        return {
+            "lr_y": lr_y,
+            "lr_uv": lr_uv,
+            "hr_y": hr_y,
+            "hr_uv": hr_uv,
+            "hr_rgb": hr_tensor,
+        }
+
+    def __getitem__(self, index: int) -> Dict[str, torch.Tensor]:
         clip_name, start = self.samples[index]
         end = start + self.sequence_length
 
@@ -143,11 +179,11 @@ class REDSVSRDataset(Dataset):
 
         if self.train:
             lr, hr = self._random_crop(lr, hr)
+            lr, hr = self._augment(lr, hr)
 
-        lr_tensor = torch.from_numpy(lr).float() / 255.0
-        hr_tensor = torch.from_numpy(hr).float() / 255.0
+        lr_tensor = self._to_chw_tensor(lr)
+        hr_tensor = self._to_chw_tensor(hr)
 
-        if self.train:
-            lr_tensor, hr_tensor = self._augment(lr_tensor, hr_tensor)
-
-        return lr_tensor, hr_tensor
+        if self.color_mode == "rgb":
+            return self._build_rgb_sample(lr_tensor, hr_tensor)
+        return self._build_yuv420_sample(lr_tensor, hr_tensor)
