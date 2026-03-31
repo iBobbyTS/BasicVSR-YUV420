@@ -6,6 +6,8 @@ from typing import Callable, Dict, Tuple
 import torch.nn as nn
 
 from .basicvsr_rgb_baseline import build_generator as build_basicvsr_rgb_baseline
+from .frequency_domain_low_frequency_fusion import build_frequency_domain_low_frequency_fusion
+from .frequency_domain_low_frequency_fusion_v2 import build_frequency_domain_low_frequency_fusion_v2
 from .low_res_joint_y_head import build_low_res_joint_y_head
 
 
@@ -32,6 +34,20 @@ MODEL_REGISTRY: Dict[str, ModelSpec] = {
         output_format="yuv420",
         metric_domain="yuv420",
         builder=build_low_res_joint_y_head,
+    ),
+    "frequency_domain_low_frequency_fusion": ModelSpec(
+        model_id="frequency_domain_low_frequency_fusion",
+        input_format="yuv420",
+        output_format="yuv420",
+        metric_domain="yuv420",
+        builder=build_frequency_domain_low_frequency_fusion,
+    ),
+    "frequency_domain_low_frequency_fusion_v2": ModelSpec(
+        model_id="frequency_domain_low_frequency_fusion_v2",
+        input_format="yuv420",
+        output_format="yuv420",
+        metric_domain="yuv420",
+        builder=build_frequency_domain_low_frequency_fusion_v2,
     ),
 }
 
