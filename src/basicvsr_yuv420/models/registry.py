@@ -6,6 +6,7 @@ from typing import Callable, Dict, Tuple
 import torch.nn as nn
 
 from .basicvsr_rgb_baseline import build_generator as build_basicvsr_rgb_baseline
+from .low_res_joint_y_head import build_low_res_joint_y_head
 
 
 @dataclass(frozen=True)
@@ -24,6 +25,13 @@ MODEL_REGISTRY: Dict[str, ModelSpec] = {
         output_format="rgb",
         metric_domain="rgb",
         builder=build_basicvsr_rgb_baseline,
+    ),
+    "low_res_joint_y_head": ModelSpec(
+        model_id="low_res_joint_y_head",
+        input_format="yuv420",
+        output_format="yuv420",
+        metric_domain="yuv420",
+        builder=build_low_res_joint_y_head,
     ),
 }
 
