@@ -200,6 +200,7 @@ cython_debug/
 #  refer to https://docs.cursor.com/context/ignore-files
 .cursorignore
 .cursorindexingignore
+.agent
 
 # Marimo
 marimo/_static/
@@ -210,7 +211,11 @@ __marimo__/
 /data/
 /models/
 /outputs/
+/results/
 *.pt
+!best.pt
+*.pid
 *.pth
 *.ckpt
 *.zip
+.DS_Store
