@@ -140,6 +140,7 @@ Important defaults:
 - validation mixed precision is enabled by default
 - SSIM computation is skipped by default; add `--compute-ssim` if you want to include it
 - for the RGB baseline, add `--rgb-eval-yuv420` if validation should pass LR input through `RGB -> YUV420 -> RGB` before inference
+- for RGB-input training, use `--rgb-input-mode rgb_yuv420_rgb` if the LR training input should be round-tripped through `RGB -> YUV420 -> RGB` inside the dataset while keeping the HR target in original RGB
 - the objective domain defaults depend on the selected model; use `--objective-domain rgb` if you want to optimize final reconstructed RGB quality explicitly
 - validation runs every epoch by default; change this with `--val-interval`
 - the default REDS validation clip split is enabled by default

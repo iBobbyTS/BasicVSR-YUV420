@@ -58,6 +58,12 @@ def parse_args() -> ArgumentParser:
     parser.add_argument("--residual-blocks", type=int, default=7)
     parser.add_argument("--scale", type=int, default=4)
     parser.add_argument(
+        "--rgb-input-mode",
+        choices=("rgb", "rgb_yuv420_rgb"),
+        default="rgb",
+        help="For RGB-input models, optionally round-trip LR input through RGB->YUV420->RGB inside the dataset.",
+    )
+    parser.add_argument(
         "--objective-domain",
         choices=("model_default", "rgb", "yuv420"),
         default="model_default",
@@ -168,6 +174,7 @@ def build_dataset(
         include_clips=include_clips,
         exclude_clips=exclude_clips,
         color_mode=color_mode,
+        rgb_input_mode=args.rgb_input_mode if color_mode == "rgb" else "rgb",
     )
 
 
@@ -246,6 +253,10 @@ def main() -> None:
         raise ValueError("RGB-output models only support rgb objective domain.")
     if model_spec.output_format == "yuv420" and objective_domain not in {"rgb", "yuv420"}:
         raise ValueError("YUV420-output models only support rgb or yuv420 objective domains.")
+    if model_spec.input_format != "rgb" and args.rgb_input_mode != "rgb":
+        raise ValueError("--rgb-input-mode is only supported for RGB-input models.")
+    if args.rgb_input_mode != "rgb" and args.rgb_eval_yuv420:
+        raise ValueError("Do not combine --rgb-input-mode rgb_yuv420_rgb with --rgb-eval-yuv420.")
 
     if config_path.exists():
         recorded_config = read_json(config_path, default={})
@@ -286,6 +297,7 @@ def main() -> None:
             scale=args.scale,
             train=False,
             color_mode=model_spec.input_format,
+            rgb_input_mode=args.rgb_input_mode if model_spec.input_format == "rgb" else "rgb",
         )
         val_loader = DataLoader(
             val_dataset,

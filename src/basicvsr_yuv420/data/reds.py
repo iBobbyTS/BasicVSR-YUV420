@@ -9,7 +9,7 @@ import torch
 from PIL import Image
 from torch.utils.data import Dataset
 
-from .colorspace import rgb_to_yuv420_bt709_full_range
+from .colorspace import rgb_through_yuv420_bt709_full_range, rgb_to_yuv420_bt709_full_range
 
 DEFAULT_VALIDATION_CLIPS = ("000", "011", "015", "020")
 IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".bmp")
@@ -33,6 +33,7 @@ class REDSVSRDataset(Dataset):
         include_clips: Optional[Sequence[str]] = None,
         exclude_clips: Optional[Sequence[str]] = None,
         color_mode: str = "rgb",
+        rgb_input_mode: str = "rgb",
     ) -> None:
         self.lr_dir = Path(lr_dir)
         self.hr_dir = Path(hr_dir)
@@ -44,9 +45,14 @@ class REDSVSRDataset(Dataset):
         self.include_clips = set(include_clips or [])
         self.exclude_clips = set(exclude_clips or [])
         self.color_mode = color_mode
+        self.rgb_input_mode = rgb_input_mode
 
         if self.color_mode not in {"rgb", "yuv420"}:
             raise ValueError(f"Unsupported color mode: {self.color_mode}")
+        if self.rgb_input_mode not in {"rgb", "rgb_yuv420_rgb"}:
+            raise ValueError(f"Unsupported RGB input mode: {self.rgb_input_mode}")
+        if self.color_mode != "rgb" and self.rgb_input_mode != "rgb":
+            raise ValueError("rgb_input_mode is only supported when color_mode='rgb'.")
         if self.color_mode == "yuv420" and self.patch_size is not None and self.patch_size % 2 != 0:
             raise ValueError("YUV420 training requires an even patch size.")
 
@@ -151,6 +157,8 @@ class REDSVSRDataset(Dataset):
         return torch.from_numpy(sequence).permute(0, 3, 1, 2).float() / 255.0
 
     def _build_rgb_sample(self, lr_tensor: torch.Tensor, hr_tensor: torch.Tensor) -> Dict[str, torch.Tensor]:
+        if self.rgb_input_mode == "rgb_yuv420_rgb":
+            lr_tensor = rgb_through_yuv420_bt709_full_range(lr_tensor)
         return {
             "lr_rgb": lr_tensor,
             "hr_rgb": hr_tensor,
