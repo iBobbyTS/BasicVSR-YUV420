@@ -14,7 +14,7 @@ if str(SRC_ROOT) not in sys.path:
 from basicvsr_yuv420.data.colorspace import yuv420_to_rgb_bt709_full_range
 from basicvsr_yuv420.engine import _compute_batch_statistics
 from basicvsr_yuv420.losses import charbonnier_loss
-from basicvsr_yuv420.models import build_model, get_model_spec
+from basicvsr_yuv420.models import build_model
 
 
 class RGBObjectiveModelSmokeTests(unittest.TestCase):
@@ -66,16 +66,11 @@ class RGBObjectiveModelSmokeTests(unittest.TestCase):
         self.assertAlmostEqual(float(stats["loss"]), float(stats["loss_rgb"]), places=7)
         self.assertAlmostEqual(float(stats["psnr"]), float(stats["psnr_rgb"]), places=7)
 
-    def test_uv_conditioned_film_uses_rgb_objective_path(self) -> None:
-        self.assertEqual(get_model_spec("uv_conditioned_film").metric_domain, "rgb")
-        self._assert_rgb_objective_stats("uv_conditioned_film")
-
     def test_low_res_joint_y_head_supports_rgb_objective_path(self) -> None:
         self._assert_rgb_objective_stats("low_res_joint_y_head")
 
     def test_frequency_domain_fusion_supports_rgb_objective_path(self) -> None:
         self._assert_rgb_objective_stats("frequency_domain_low_frequency_fusion")
-
 
 if __name__ == "__main__":
     unittest.main()

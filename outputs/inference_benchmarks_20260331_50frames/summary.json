@@ -42,16 +42,6 @@
       "avg_memory_total_mb": 4248.94,
       "avg_gpu_util_percent": 88.14,
       "memory_csv": "C:\\Users\\iBobb\\PycharmProjects\\BasicVSR-YUV420\\outputs\\inference_benchmarks_20260331_50frames\\frequency_domain_low_frequency_fusion.memory_10hz.csv"
-    },
-    {
-      "model": "uv_conditioned_film",
-      "fps": 22.92414087266024,
-      "mean_sequence_latency_seconds": 2.18110682,
-      "peak_memory_total_mb": 5253,
-      "peak_memory_delta_mb": 4391,
-      "avg_memory_total_mb": 4893.16,
-      "avg_gpu_util_percent": 94.02,
-      "memory_csv": "C:\\Users\\iBobb\\PycharmProjects\\BasicVSR-YUV420\\outputs\\inference_benchmarks_20260331_50frames\\uv_conditioned_film.memory_10hz.csv"
     }
   ]
 }

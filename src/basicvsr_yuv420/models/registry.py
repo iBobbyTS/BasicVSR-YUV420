@@ -7,9 +7,7 @@ import torch.nn as nn
 
 from .basicvsr_rgb_baseline import build_generator as build_basicvsr_rgb_baseline
 from .frequency_domain_low_frequency_fusion import build_frequency_domain_low_frequency_fusion
-from .frequency_domain_low_frequency_fusion_v2 import build_frequency_domain_low_frequency_fusion_v2
 from .low_res_joint_y_head import build_low_res_joint_y_head
-from .uv_conditioned_film import build_uv_conditioned_film
 
 
 @dataclass(frozen=True)
@@ -42,20 +40,6 @@ MODEL_REGISTRY: Dict[str, ModelSpec] = {
         output_format="yuv420",
         metric_domain="yuv420",
         builder=build_frequency_domain_low_frequency_fusion,
-    ),
-    "frequency_domain_low_frequency_fusion_v2": ModelSpec(
-        model_id="frequency_domain_low_frequency_fusion_v2",
-        input_format="yuv420",
-        output_format="yuv420",
-        metric_domain="yuv420",
-        builder=build_frequency_domain_low_frequency_fusion_v2,
-    ),
-    "uv_conditioned_film": ModelSpec(
-        model_id="uv_conditioned_film",
-        input_format="yuv420",
-        output_format="yuv420",
-        metric_domain="rgb",
-        builder=build_uv_conditioned_film,
     ),
 }
 

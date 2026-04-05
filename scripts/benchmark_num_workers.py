@@ -23,7 +23,7 @@ from basicvsr_yuv420.models import build_model
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Benchmark training-step speed for different num_workers values.")
-    parser.add_argument("--model", default="uv_conditioned_film")
+    parser.add_argument("--model", default="low_res_joint_y_head")
     parser.add_argument("--train-lr-dir", required=True)
     parser.add_argument("--train-hr-dir", required=True)
     parser.add_argument("--spynet-weights")

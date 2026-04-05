@@ -1,9 +1,0 @@
-{
-  "status": "running",
-  "requested_epochs": 70,
-  "last_completed_epoch": 12,
-  "next_epoch": 13,
-  "latest_checkpoint": "outputs\\uv_conditioned_film_v3_rgb_objective_bs6_vb6_nw1\\latest.pt",
-  "best_psnr": 27.593248494466145,
-  "resumed_from": null
-}
