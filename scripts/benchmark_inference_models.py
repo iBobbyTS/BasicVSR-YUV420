@@ -3,10 +3,13 @@ from __future__ import annotations
 import argparse
 import gc
 import json
+import os
+import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
-from typing import Dict, List, Tuple, Union
+from typing import Dict, List, Sequence, Union
 
 import torch
 
@@ -22,15 +25,16 @@ from basicvsr_yuv420.models import build_model, get_model_spec, list_model_ids
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Benchmark forward inference speed and peak memory for all models.")
     parser.add_argument("--input-dir", required=True, help="Directory containing a sequence of LR frames.")
-    parser.add_argument("--frames", type=int, default=100, help="Number of frames to benchmark from the start of the clip.")
+    parser.add_argument("--frames", type=int, default=15, help="Number of frames to benchmark from the start of the clip.")
     parser.add_argument("--device", default="cuda:0")
     parser.add_argument("--spynet-weights")
     parser.add_argument("--num-channels", type=int, default=64)
     parser.add_argument("--residual-blocks", type=int, default=7)
     parser.add_argument("--warmup-runs", type=int, default=2)
-    parser.add_argument("--measure-runs", type=int, default=5)
+    parser.add_argument("--measure-runs", type=int, default=10)
     parser.add_argument("--amp", action="store_true", help="Benchmark inference with autocast enabled.")
     parser.add_argument("--models", nargs="+", default=list(list_model_ids()))
+    parser.add_argument("--single-model-output", help=argparse.SUPPRESS)
     return parser.parse_args()
 
 
@@ -54,6 +58,52 @@ def move_sequence_to_device(sequence: Union[torch.Tensor, Dict[str, torch.Tensor
     if isinstance(sequence, dict):
         return {key: value.to(device, non_blocking=True) for key, value in sequence.items()}
     return sequence.to(device, non_blocking=True)
+
+
+def build_child_command(args: argparse.Namespace, model_id: str, output_path: str) -> str:
+    command: List[str] = [
+        sys.executable,
+        str(Path(__file__).resolve()),
+        "--input-dir",
+        args.input_dir,
+        "--frames",
+        str(args.frames),
+        "--device",
+        args.device,
+        "--num-channels",
+        str(args.num_channels),
+        "--residual-blocks",
+        str(args.residual_blocks),
+        "--warmup-runs",
+        str(args.warmup_runs),
+        "--measure-runs",
+        str(args.measure_runs),
+        "--models",
+        model_id,
+        "--single-model-output",
+        output_path,
+    ]
+    if args.spynet_weights:
+        command.extend(["--spynet-weights", args.spynet_weights])
+    if args.amp:
+        command.append("--amp")
+    return subprocess.list2cmdline(command)
+
+
+def benchmark_model_in_subprocess(
+    model_id: str,
+    args: argparse.Namespace,
+    *,
+    command_runner=os.system,
+) -> Dict[str, float]:
+    with tempfile.TemporaryDirectory() as temp_dir:
+        output_path = str(Path(temp_dir) / f"{model_id}.json")
+        command = build_child_command(args, model_id, output_path)
+        exit_code = command_runner(command)
+        if exit_code != 0:
+            raise RuntimeError(f"Subprocess benchmark failed for model '{model_id}' with exit code {exit_code}.")
+        payload = json.loads(Path(output_path).read_text(encoding="utf-8"))
+    return payload["result"]
 
 
 @torch.no_grad()
@@ -115,11 +165,38 @@ def benchmark_model(
 def main() -> None:
     args = parse_args()
     device = torch.device(args.device if torch.cuda.is_available() else "cpu")
-    print(json.dumps({"device": str(device), "frames": args.frames, "amp": args.amp}, indent=2), flush=True)
+
+    if args.single_model_output:
+        if len(args.models) != 1:
+            raise ValueError("--single-model-output requires exactly one model id.")
+        result = benchmark_model(model_id=args.models[0], args=args, device=device)
+        payload = {
+            "device": str(device),
+            "frames": args.frames,
+            "amp": args.amp,
+            "model": args.models[0],
+            "result": result,
+        }
+        Path(args.single_model_output).write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        print(json.dumps(payload, indent=2), flush=True)
+        return
+
+    print(
+        json.dumps(
+            {
+                "device": str(device),
+                "frames": args.frames,
+                "amp": args.amp,
+                "execution_mode": "os.system subprocess per model",
+            },
+            indent=2,
+        ),
+        flush=True,
+    )
 
     results = {}
     for model_id in args.models:
-        result = benchmark_model(model_id=model_id, args=args, device=device)
+        result = benchmark_model_in_subprocess(model_id=model_id, args=args)
         results[model_id] = result
         print(
             json.dumps(
