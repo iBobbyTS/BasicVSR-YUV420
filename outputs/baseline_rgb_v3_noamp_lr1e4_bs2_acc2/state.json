@@ -1,0 +1,9 @@
+{
+  "status": "completed",
+  "requested_epochs": 70,
+  "last_completed_epoch": 70,
+  "next_epoch": null,
+  "latest_checkpoint": "outputs\\baseline_rgb_v3_noamp_lr1e4_bs2_acc2\\latest.pt",
+  "best_psnr": 28.09131095674303,
+  "resumed_from": null
+}

@@ -1,0 +1,9 @@
+{
+  "status": "completed",
+  "requested_epochs": 70,
+  "last_completed_epoch": 70,
+  "next_epoch": null,
+  "latest_checkpoint": "outputs\\low_res_joint_y_head_v2_bs8_vb1_nw4\\latest.pt",
+  "best_psnr": 37.33799663119846,
+  "resumed_from": null
+}

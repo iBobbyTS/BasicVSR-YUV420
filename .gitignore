@@ -211,7 +211,9 @@ __marimo__/
 # Project-local artifacts
 /data/
 /models/
-/outputs/
+/outputs/**/*.pt
+!/outputs/**/best.pt
+!/outputs/**/*.log
 /results/*
 !/results/performance.md
 !/results/psnr.md

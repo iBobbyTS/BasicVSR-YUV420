@@ -1,0 +1,24 @@
+{
+  "device": "cuda:0",
+  "frames": 50,
+  "amp": false
+}
+{
+  "model": "uv_conditioned_film",
+  "mean_sequence_latency_seconds": 2.2360946500000005,
+  "frames_per_second": 22.36041305317733,
+  "peak_memory_gb": 2.1172237396240234,
+  "frames": 50.0,
+  "measure_runs": 20.0
+}
+{
+  "summary": {
+    "uv_conditioned_film": {
+      "mean_sequence_latency_seconds": 2.2360946500000005,
+      "frames_per_second": 22.36041305317733,
+      "peak_memory_gb": 2.1172237396240234,
+      "frames": 50.0,
+      "measure_runs": 20.0
+    }
+  }
+}

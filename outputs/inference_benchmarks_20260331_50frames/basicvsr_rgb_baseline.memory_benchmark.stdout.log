@@ -1,0 +1,24 @@
+{
+  "device": "cuda:0",
+  "frames": 50,
+  "amp": false
+}
+{
+  "model": "basicvsr_rgb_baseline",
+  "mean_sequence_latency_seconds": 2.316983415,
+  "frames_per_second": 21.579783297671984,
+  "peak_memory_gb": 2.3254318237304688,
+  "frames": 50.0,
+  "measure_runs": 20.0
+}
+{
+  "summary": {
+    "basicvsr_rgb_baseline": {
+      "mean_sequence_latency_seconds": 2.316983415,
+      "frames_per_second": 21.579783297671984,
+      "peak_memory_gb": 2.3254318237304688,
+      "frames": 50.0,
+      "measure_runs": 20.0
+    }
+  }
+}
