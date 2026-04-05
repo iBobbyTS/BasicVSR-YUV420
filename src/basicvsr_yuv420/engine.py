@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable, Dict, Optional, Tuple, Union
+from typing import Callable, Dict, List, Optional, Tuple, Union
 
 import torch
 from torch.cuda.amp import GradScaler, autocast
@@ -42,6 +42,13 @@ class EpochResult:
     loss_rgb: Optional[float] = None
     psnr_rgb: Optional[float] = None
     ssim_rgb: Optional[float] = None
+
+
+@dataclass
+class EvaluationStatistics:
+    result: EpochResult
+    std: Dict[str, Optional[float]]
+    count: int
 
 
 def _prepare_batch(
@@ -164,6 +171,48 @@ def _summarize_epoch(totals: Dict[str, float], num_batches: int, lr: float) -> E
         psnr_rgb=None if "psnr_rgb" not in totals else totals["psnr_rgb"] / divisor,
         ssim_rgb=None if "ssim_rgb" not in totals else totals["ssim_rgb"] / divisor,
     )
+
+
+def _append_metric_history(
+    history: Dict[str, List[float]],
+    metrics: Dict[str, Optional[torch.Tensor]],
+) -> None:
+    for key, value in metrics.items():
+        if value is not None:
+            history.setdefault(key, []).append(float(value.item()))
+
+
+def summarize_metric_history(
+    history: Dict[str, List[float]],
+    *,
+    lr: float = 0.0,
+) -> EvaluationStatistics:
+    means = {key: sum(values) / len(values) for key, values in history.items() if values}
+    std = {
+        key: None
+        if not values
+        else float(torch.tensor(values, dtype=torch.float32).std(unbiased=False).item())
+        for key, values in history.items()
+    }
+    result = EpochResult(
+        loss=means["loss"],
+        psnr=means["psnr"],
+        ssim=means.get("ssim"),
+        lr=lr,
+        y_psnr=means.get("y_psnr"),
+        uv420_psnr=means.get("uv420_psnr"),
+        loss_y=means.get("loss_y"),
+        loss_uv=means.get("loss_uv"),
+        psnr_y=means.get("psnr_y"),
+        psnr_uv=means.get("psnr_uv"),
+        ssim_y=means.get("ssim_y"),
+        ssim_uv=means.get("ssim_uv"),
+        loss_rgb=means.get("loss_rgb"),
+        psnr_rgb=means.get("psnr_rgb"),
+        ssim_rgb=means.get("ssim_rgb"),
+    )
+    count = len(history.get("loss", []))
+    return EvaluationStatistics(result=result, std=std, count=count)
 
 
 def train_one_epoch(
@@ -301,3 +350,46 @@ def evaluate(
         progress_bar.set_postfix(**postfix)
 
     return _summarize_epoch(totals, len(dataloader), 0.0)
+
+
+@torch.no_grad()
+def evaluate_with_statistics(
+    model: torch.nn.Module,
+    dataloader: DataLoader,
+    device: torch.device,
+    *,
+    loss_fn: Callable[[torch.Tensor, torch.Tensor], torch.Tensor] = charbonnier_loss,
+    amp_enabled: bool = False,
+    compute_ssim: bool = True,
+    progress_desc: str = "Eval",
+    forward_fn: Optional[Callable[[BatchTensors], BatchTensors]] = None,
+    metric_domain: str = "rgb",
+) -> EvaluationStatistics:
+    model.eval()
+    predict = forward_fn if forward_fn is not None else model
+    history: Dict[str, List[float]] = {}
+    progress_bar = tqdm(dataloader, desc=progress_desc, leave=False)
+
+    for batch in progress_bar:
+        lr, hr, _ = _prepare_batch(batch, device)
+        with autocast(enabled=amp_enabled):
+            prediction = predict(lr)
+            batch_metrics = _compute_batch_statistics(
+                prediction,
+                hr,
+                loss_fn=loss_fn,
+                compute_ssim=compute_ssim,
+                metric_domain=metric_domain,
+            )
+
+        _append_metric_history(history, batch_metrics)
+
+        postfix = {
+            "loss": f"{batch_metrics['loss'].item():.4f}",
+            "psnr": f"{batch_metrics['psnr'].item():.4f}",
+        }
+        if batch_metrics["ssim"] is not None:
+            postfix["ssim"] = f"{batch_metrics['ssim'].item():.4f}"
+        progress_bar.set_postfix(**postfix)
+
+    return summarize_metric_history(history)

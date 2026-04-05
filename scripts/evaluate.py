@@ -15,9 +15,17 @@ if str(SRC_ROOT) not in sys.path:
 
 from basicvsr_yuv420.checkpoints import load_model_weights
 from basicvsr_yuv420.data import DEFAULT_VALIDATION_CLIPS, REDSVSRDataset
-from basicvsr_yuv420.engine import evaluate
+from basicvsr_yuv420.engine import evaluate, evaluate_with_statistics
 from basicvsr_yuv420.models import build_model, get_model_spec, list_model_ids
 from basicvsr_yuv420.utils import resolve_device
+
+
+def count_clip_frames(root: str, clip_names: list[str]) -> int:
+    base_dir = Path(root)
+    total = 0
+    for clip_name in clip_names:
+        total += sum(1 for path in (base_dir / clip_name).iterdir() if path.is_file())
+    return total
 
 
 def parse_args() -> ArgumentParser:
@@ -47,6 +55,16 @@ def parse_args() -> ArgumentParser:
         action="store_true",
         help="For the RGB baseline, pass LR input through RGB->YUV420->RGB before inference.",
     )
+    parser.add_argument(
+        "--rgb-input-mode",
+        choices=("rgb", "rgb_yuv420_rgb"),
+        default="rgb",
+        help="Apply RGB input preprocessing in the dataset pipeline for RGB-input models.",
+    )
+    parser.add_argument(
+        "--stats-output",
+        help="Optional path to write evaluation metadata plus mean/std statistics as JSON.",
+    )
     return parser
 
 
@@ -61,6 +79,12 @@ def main() -> None:
         raise ValueError("RGB-output models only support rgb metric domain.")
     if model_spec.output_format == "yuv420" and metric_domain not in {"rgb", "yuv420"}:
         raise ValueError("YUV420-output models only support rgb or yuv420 metric domains.")
+    if model_spec.input_format != "rgb" and args.rgb_input_mode != "rgb":
+        raise ValueError("--rgb-input-mode is only supported for RGB-input models.")
+    if args.rgb_eval_yuv420 and args.rgb_input_mode != "rgb":
+        raise ValueError("--rgb-eval-yuv420 cannot be combined with --rgb-input-mode rgb_yuv420_rgb.")
+    if args.stats_output and args.batch_size != 1:
+        raise ValueError("--stats-output requires --batch-size 1 so statistics are computed over evaluation windows.")
     include_clips = DEFAULT_VALIDATION_CLIPS if args.use_default_reds_split else None
 
     dataset = REDSVSRDataset(
@@ -73,6 +97,7 @@ def main() -> None:
         train=False,
         include_clips=include_clips,
         color_mode=model_spec.input_format,
+        rgb_input_mode=args.rgb_input_mode,
     )
     dataloader = DataLoader(
         dataset,
@@ -98,15 +123,52 @@ def main() -> None:
             raise ValueError(f"Model '{args.model}' does not implement eval_yuv420().")
         forward_fn = model.eval_yuv420
 
-    results = evaluate(model, dataloader, device, forward_fn=forward_fn, metric_domain=metric_domain)
+    if args.stats_output:
+        stats = evaluate_with_statistics(
+            model,
+            dataloader,
+            device,
+            forward_fn=forward_fn,
+            metric_domain=metric_domain,
+        )
+        results = stats.result
+    else:
+        stats = None
+        results = evaluate(model, dataloader, device, forward_fn=forward_fn, metric_domain=metric_domain)
+
+    first_sample = dataset[0]
+    if "lr_rgb" in first_sample:
+        lr_shape = tuple(first_sample["lr_rgb"].shape)
+        hr_shape = tuple(first_sample["hr_rgb"].shape)
+    else:
+        lr_shape = tuple(first_sample["lr_y"].shape)
+        hr_shape = tuple(first_sample["hr_rgb"].shape)
+    lr_frame_files = count_clip_frames(args.lr_dir, dataset.clip_names)
+    hr_frame_files = count_clip_frames(args.hr_dir, dataset.clip_names)
+
     payload = {
         "model": args.model,
         "checkpoint": args.checkpoint,
         "epoch": checkpoint_state.get("epoch"),
         "rgb_eval_yuv420": args.rgb_eval_yuv420,
+        "rgb_input_mode": args.rgb_input_mode,
         "metric_domain": metric_domain,
+        "num_clips": len(dataset.clip_names),
+        "num_windows": len(dataset),
+        "num_lr_frame_files": lr_frame_files,
+        "num_hr_frame_files": hr_frame_files,
+        "sequence_length": args.sequence_length,
+        "sequence_stride": args.sequence_stride,
+        "lr_sequence_shape": lr_shape,
+        "hr_sequence_shape": hr_shape,
         **asdict(results),
     }
+    if stats is not None:
+        payload["metrics_std"] = stats.std
+        payload["window_count"] = stats.count
+        output_path = Path(args.stats_output)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     print(json.dumps(payload, indent=2))
 
 

@@ -22,7 +22,7 @@ from basicvsr_yuv420.models import build_model, get_model_spec, list_model_ids
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Benchmark forward inference speed and peak memory for all models.")
     parser.add_argument("--input-dir", required=True, help="Directory containing a sequence of LR frames.")
-    parser.add_argument("--frames", type=int, default=15, help="Number of frames to benchmark from the start of the clip.")
+    parser.add_argument("--frames", type=int, default=100, help="Number of frames to benchmark from the start of the clip.")
     parser.add_argument("--device", default="cuda:0")
     parser.add_argument("--spynet-weights")
     parser.add_argument("--num-channels", type=int, default=64)
