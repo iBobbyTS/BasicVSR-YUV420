@@ -7,6 +7,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from basicvsr_yuv420.data.colorspace import rgb_through_yuv420_bt709_full_range
+
 from .common import flow_warp
 from .spynet import SpyNet
 
@@ -185,6 +187,9 @@ class Generator(nn.Module):
             backward_outputs[t] = out
 
         return torch.stack(backward_outputs, dim=1)
+
+    def eval_yuv420(self, x: torch.Tensor) -> torch.Tensor:
+        return self.forward(rgb_through_yuv420_bt709_full_range(x))
 
 
 def build_generator(

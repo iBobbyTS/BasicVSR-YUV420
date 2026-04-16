@@ -1,0 +1,24 @@
+{
+  "device": "cuda:0",
+  "frames": 50,
+  "amp": false
+}
+{
+  "model": "low_res_joint_y_head",
+  "mean_sequence_latency_seconds": 1.5454120049999995,
+  "frames_per_second": 32.35383175375295,
+  "peak_memory_gb": 2.1176328659057617,
+  "frames": 50.0,
+  "measure_runs": 20.0
+}
+{
+  "summary": {
+    "low_res_joint_y_head": {
+      "mean_sequence_latency_seconds": 1.5454120049999995,
+      "frames_per_second": 32.35383175375295,
+      "peak_memory_gb": 2.1176328659057617,
+      "frames": 50.0,
+      "measure_runs": 20.0
+    }
+  }
+}

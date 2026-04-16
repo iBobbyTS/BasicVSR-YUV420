@@ -1,0 +1,47 @@
+{
+  "benchmark": "long_sequence_inference",
+  "frames": 50,
+  "fps_measurement": {
+    "method": "pure forward only, no nvidia-smi sampling",
+    "warmup_runs": 1,
+    "measure_runs": 5
+  },
+  "memory_measurement": {
+    "method": "nvidia-smi 10Hz sampling in separate run",
+    "duration_seconds": 20,
+    "interval_ms": 100,
+    "idle_memory_mb": 862
+  },
+  "results": [
+    {
+      "model": "basicvsr_rgb_baseline",
+      "fps": 21.79814787764121,
+      "mean_sequence_latency_seconds": 2.29377286,
+      "peak_memory_total_mb": 4506,
+      "peak_memory_delta_mb": 3644,
+      "avg_memory_total_mb": 4250.8,
+      "avg_gpu_util_percent": 93.35,
+      "memory_csv": "C:\\Users\\iBobb\\PycharmProjects\\BasicVSR-YUV420\\outputs\\inference_benchmarks_20260331_50frames\\basicvsr_rgb_baseline.memory_10hz.csv"
+    },
+    {
+      "model": "low_res_joint_y_head",
+      "fps": 32.296337134177286,
+      "mean_sequence_latency_seconds": 1.5481631800000002,
+      "peak_memory_total_mb": 4494,
+      "peak_memory_delta_mb": 3632,
+      "avg_memory_total_mb": 4238.86,
+      "avg_gpu_util_percent": 90.06,
+      "memory_csv": "C:\\Users\\iBobb\\PycharmProjects\\BasicVSR-YUV420\\outputs\\inference_benchmarks_20260331_50frames\\low_res_joint_y_head.memory_10hz.csv"
+    },
+    {
+      "model": "frequency_domain_low_frequency_fusion",
+      "fps": 28.87520963690947,
+      "mean_sequence_latency_seconds": 1.7315891600000008,
+      "peak_memory_total_mb": 4506,
+      "peak_memory_delta_mb": 3644,
+      "avg_memory_total_mb": 4248.94,
+      "avg_gpu_util_percent": 88.14,
+      "memory_csv": "C:\\Users\\iBobb\\PycharmProjects\\BasicVSR-YUV420\\outputs\\inference_benchmarks_20260331_50frames\\frequency_domain_low_frequency_fusion.memory_10hz.csv"
+    }
+  ]
+}

@@ -1,16 +1,22 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import List, Optional, Sequence, Tuple, Union
+from typing import Dict, List, Optional, Sequence, Tuple, Union
 
 import numpy as np
 import torch
 from PIL import Image
 
+from .data import rgb_to_yuv420_bt709_full_range, yuv420_to_rgb_bt709_full_range
+
 IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".bmp")
 
 
-def load_frame_sequence(frames_dir: Union[str, Path]) -> Tuple[torch.Tensor, List[Path]]:
+def load_frame_sequence(
+    frames_dir: Union[str, Path],
+    *,
+    color_mode: str = "rgb",
+) -> Tuple[Union[torch.Tensor, Dict[str, torch.Tensor]], List[Path]]:
     input_dir = Path(frames_dir)
     if not input_dir.exists():
         raise FileNotFoundError(f"Input directory not found: {input_dir}")
@@ -25,12 +31,18 @@ def load_frame_sequence(frames_dir: Union[str, Path]) -> Tuple[torch.Tensor, Lis
         frame = np.asarray(image, dtype=np.float32) / 255.0
         frames.append(torch.from_numpy(frame).permute(2, 0, 1))
 
-    sequence = torch.stack(frames, dim=0).unsqueeze(0)
-    return sequence, frame_paths
+    rgb_sequence = torch.stack(frames, dim=0).unsqueeze(0)
+    if color_mode == "rgb":
+        return rgb_sequence, frame_paths
+    if color_mode != "yuv420":
+        raise ValueError(f"Unsupported inference color mode: {color_mode}")
+
+    y, uv = rgb_to_yuv420_bt709_full_range(rgb_sequence)
+    return {"y": y, "uv": uv}, frame_paths
 
 
 def save_frame_sequence(
-    sequence: torch.Tensor,
+    sequence: Union[torch.Tensor, Dict[str, torch.Tensor]],
     output_dir: Union[str, Path],
     *,
     reference_paths: Optional[Sequence[Path]] = None,
@@ -38,10 +50,17 @@ def save_frame_sequence(
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
 
-    if sequence.ndim != 5 or sequence.size(0) != 1:
-        raise ValueError(f"Expected a tensor shaped [1, T, C, H, W], but found {sequence.shape}")
+    if isinstance(sequence, dict):
+        if "y" not in sequence or "uv" not in sequence:
+            raise ValueError("YUV420 inference output must include 'y' and 'uv'.")
+        rgb_sequence = yuv420_to_rgb_bt709_full_range(sequence["y"], sequence["uv"])
+    else:
+        rgb_sequence = sequence
 
-    frames = sequence.squeeze(0).detach().cpu().clamp(0.0, 1.0).permute(0, 2, 3, 1).numpy()
+    if rgb_sequence.ndim != 5 or rgb_sequence.size(0) != 1:
+        raise ValueError(f"Expected a tensor shaped [1, T, C, H, W], but found {rgb_sequence.shape}")
+
+    frames = rgb_sequence.squeeze(0).detach().cpu().clamp(0.0, 1.0).permute(0, 2, 3, 1).numpy()
     for index, frame in enumerate(frames):
         file_stem = reference_paths[index].stem if reference_paths is not None else f"{index:08d}"
         image = Image.fromarray((frame * 255.0).round().astype(np.uint8))
